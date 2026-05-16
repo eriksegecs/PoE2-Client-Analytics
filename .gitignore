@@ -1,0 +1,6 @@
+data/
+dashboard.html
+*.log
+client.txt
+Client.txt
+*.tmp

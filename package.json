@@ -1,0 +1,9 @@
+{
+  "name": "poe2-client-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "analyze": "node ./poe2-client-analyzer.mjs"
+  }
+}

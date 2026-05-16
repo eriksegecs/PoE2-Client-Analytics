@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PoE2 Client Analytics</title>
+  <style>
+    :root {
+      --bg: #101214;
+      --surface: #171b1e;
+      --surface-2: #20262a;
+      --line: #313a40;
+      --text: #f0f3ef;
+      --muted: #aeb7b1;
+      --accent: #e0b65a;
+      --green: #70c58f;
+      --blue: #74a9d7;
+      --red: #dc7d67;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      min-height: 82vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(340px, .95fr);
+      gap: 28px;
+      align-items: center;
+      padding: 42px 44px 28px;
+      border-bottom: 1px solid var(--line);
+      background: #101314;
+    }
+    #heroCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: .86;
+    }
+    .hero > div {
+      position: relative;
+      z-index: 1;
+    }
+    h1 {
+      margin: 0;
+      max-width: 780px;
+      font-size: clamp(42px, 7vw, 86px);
+      line-height: .95;
+      letter-spacing: 0;
+    }
+    .lead {
+      max-width: 720px;
+      margin: 22px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.55;
+    }
+    .trust {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 26px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.04);
+      padding: 4px 10px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .panel, .card, .metric {
+      background: rgba(23,27,30,.92);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .upload {
+      padding: 18px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.28);
+    }
+    .drop {
+      display: grid;
+      place-items: center;
+      min-height: 270px;
+      border: 1px dashed #56636a;
+      border-radius: 8px;
+      background: #121517;
+      text-align: center;
+      padding: 26px;
+      cursor: pointer;
+    }
+    .drop.dragover {
+      border-color: var(--accent);
+      background: #181b1c;
+    }
+    .drop strong { display: block; font-size: 21px; margin-bottom: 8px; }
+    .drop span { color: var(--muted); line-height: 1.45; }
+    input[type="file"] { display: none; }
+    .progressWrap {
+      display: none;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .progressTrack {
+      height: 10px;
+      border-radius: 999px;
+      background: #0d0f10;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    .progressBar {
+      width: 0%;
+      height: 100%;
+      background: var(--accent);
+      transition: width .15s ease;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: #22282c;
+      border-radius: 6px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button.primary {
+      background: var(--accent);
+      color: #14110a;
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .preview {
+      margin-top: 18px;
+      display: grid;
+      gap: 8px;
+    }
+    .previewRow {
+      display: grid;
+      grid-template-columns: 115px minmax(0, 1fr) 70px;
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+    }
+    .previewLabel { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .barTrack { height: 10px; background: #101315; border-radius: 999px; overflow: hidden; }
+    .barFill { height: 100%; background: var(--blue); min-width: 2px; }
+    .barValue { color: var(--muted); text-align: right; font-size: 12px; }
+    .app {
+      display: none;
+      padding: 22px 28px 34px;
+    }
+    .appTop {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .app h2 { margin: 0; font-size: 24px; }
+    .source { color: var(--muted); margin-top: 5px; font-size: 13px; }
+    .fileFacts,
+    .toolbar {
+      display: grid;
+      gap: 10px;
+    }
+    .fileFacts {
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      margin-bottom: 16px;
+    }
+    .toolbar {
+      grid-template-columns: minmax(220px, 1fr) 150px 150px 170px;
+      margin-bottom: 16px;
+    }
+    input[type="search"], select {
+      width: 100%;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .metric { padding: 14px; min-height: 84px; }
+    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    .value { font-size: 24px; font-weight: 750; margin-top: 6px; }
+    .layout {
+      display: grid;
+      grid-template-columns: 390px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: calc(100vh - 255px);
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .run {
+      text-align: left;
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .run.active { border-color: var(--accent); background: var(--surface-2); }
+    .runTop { display: flex; justify-content: space-between; gap: 10px; }
+    .runTitle { font-weight: 750; overflow-wrap: anywhere; }
+    .detail { padding: 16px; }
+    .detail h3 { margin: 0 0 5px; font-size: 22px; }
+    .detailGrid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .small {
+      background: #15191b;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      min-height: 72px;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .bars { display: grid; gap: 8px; margin-top: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: left; }
+    th { color: var(--muted); font-weight: 650; }
+    .muted { color: var(--muted); }
+    .error {
+      display: none;
+      margin-top: 12px;
+      color: #ffd0c7;
+      background: rgba(220,125,103,.12);
+      border: 1px solid rgba(220,125,103,.45);
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 13px;
+    }
+    @media (max-width: 1050px) {
+      .hero, .fileFacts, .toolbar, .metrics, .layout, .detailGrid, .split { grid-template-columns: 1fr; }
+      .hero { padding: 28px 16px; }
+      .app { padding: 18px 16px 28px; }
+      .list { max-height: none; }
+    }
+  </style>
+</head>
+<body>
+  <section class="hero" id="hero">
+    <canvas id="heroCanvas" aria-hidden="true"></canvas>
+    <div>
+      <h1>PoE2 Client Analytics</h1>
+      <p class="lead">
+        Analise campanhas direto do seu `client.txt`: versao, liga, classe, tempo por ato,
+        hideout, AFK, foco perdido e sinais de build. O arquivo fica no seu navegador.
+      </p>
+      <div class="trust">
+        <span class="pill">ETL local</span>
+        <span class="pill">Sem servidor</span>
+        <span class="pill">client.txt grande</span>
+        <span class="pill">Dashboard instantaneo</span>
+      </div>
+    </div>
+    <div class="panel upload">
+      <label class="drop" id="dropZone" for="fileInput">
+        <input id="fileInput" type="file" accept=".txt,text/plain">
+        <span>
+          <strong>Selecione ou arraste o client.txt</strong>
+          C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\logs\client.txt
+        </span>
+      </label>
+      <div class="progressWrap" id="progressWrap">
+        <div id="progressText">Aguardando arquivo...</div>
+        <div class="progressTrack"><div class="progressBar" id="progressBar"></div></div>
+      </div>
+      <div class="error" id="errorBox"></div>
+      <div class="actions">
+        <button class="primary" id="chooseButton">Escolher arquivo</button>
+        <button id="downloadJsonButton" disabled>Baixar JSON</button>
+      </div>
+      <div class="preview" id="landingPreview">
+        <div class="previewRow"><span class="previewLabel">Versao</span><span class="barTrack"><span class="barFill" style="width: 78%"></span></span><span class="barValue">0.4</span></div>
+        <div class="previewRow"><span class="previewLabel">Liga</span><span class="barTrack"><span class="barFill" style="width: 52%; background: var(--green)"></span></span><span class="barValue">HCSSF</span></div>
+        <div class="previewRow"><span class="previewLabel">Hideout</span><span class="barTrack"><span class="barFill" style="width: 31%; background: var(--accent)"></span></span><span class="barValue">tempo</span></div>
+      </div>
+    </div>
+  </section>
+
+  <main class="app" id="app">
+    <div class="appTop">
+      <div>
+        <h2>Dashboard de campanhas</h2>
+        <div class="source" id="source"></div>
+      </div>
+      <button id="newFileButton">Analisar outro arquivo</button>
+    </div>
+    <section class="fileFacts" id="fileFacts"></section>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Filtrar personagem, classe, versao ou liga">
+      <select id="versionFilter"></select>
+      <select id="classFilter"></select>
+      <select id="leagueFilter"></select>
+    </div>
+    <section class="metrics" id="metrics"></section>
+    <section class="layout">
+      <div class="list" id="campaignList"></div>
+      <div class="card detail" id="detail"></div>
+    </section>
+  </main>
+
+  <script>
+    const RELEASE_WINDOWS = [
+      ["0.4", "The Last of the Druids", "2025-12-12T19:00:00Z"],
+      ["0.3", "The Third Edict", "2025-08-29T19:00:00Z"],
+      ["0.2", "Dawn of the Hunt", "2025-04-04T19:00:00Z"],
+      ["0.1", "Early Access", "2024-12-06T19:00:00Z"],
+    ];
+    const BASE_CLASSES = new Set(["Huntress","Ranger","Warrior","Mercenary","Sorceress","Witch","Monk","Druid"]);
+    const ASCENDANCY_TO_BASE = new Map(Object.entries({
+      amazon:"Huntress", ritualist:"Huntress", deadeye:"Ranger", pathfinder:"Ranger",
+      titan:"Warrior", warbringer:"Warrior", "smith of kitava":"Warrior",
+      witchhunter:"Mercenary", "gemling legionnaire":"Mercenary", tactician:"Mercenary",
+      stormweaver:"Sorceress", chronomancer:"Sorceress", infernalist:"Witch",
+      "blood mage":"Witch", lich:"Witch", invoker:"Monk", "acolyte of chayula":"Monk",
+      "disciple of varashta":"Monk", shaman:"Druid", oracle:"Druid",
+    }));
+    const LOG_PREFIX = /^(?<date>\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2})\s+(?<ms>\d+)\s+\S+\s+\[(?<level>\w+) Client (?<pid>\d+)\]\s+(?<message>.*)$/;
+    const LOG_OPENING = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}) \*{5} LOG FILE OPENING/;
+    const USER_AGENT = /User agent: PoE poe2_production\/tags\/(?<tag>\S+)/;
+    const AREA = /Generating level (?<level>\d+) area "(?<area>[^"]+)" with seed (?<seed>\d+)/;
+    const LEVEL_UP = /: (?<character>.+?) \((?<className>[^)]+)\) is now level (?<level>\d+)/;
+    const PASSIVE = /Successfully (?<action>unallocated|allocated) passive skill id: (?<id>[^,]+), name: (?<name>.+)/;
+    const TRADE_LEAGUE_PATTERNS = [
+      /\blisted for\b.*?\bin\s+(?<league>[^()]+?)\s+\(stash tab/i,
+      /\blistado por\b.*?\b(?:na|no|em)\s+(?<league>[^()]+?)\s+\(aba/i,
+      /標價.*?\s在\s(?<league>[^()]+?)\s\(/i,
+      /(?<league>Standard|Hardcore)\s+리그/i,
+      /\b(?<league>Standard|Hardcore)\b.*?(?:stash tab|倉庫頁|보관함|aba|sección|секция|ลีก)/i,
+    ];
+
+    let analysis = null;
+    let selectedId = null;
+
+    function parseDate(value) {
+      const [date, time] = value.split(" ");
+      const [year, month, day] = date.split("/").map(Number);
+      const [hour, minute, second] = time.split(":").map(Number);
+      return new Date(year, month - 1, day, hour, minute, second);
+    }
+    const secondsBetween = (a, b) => Math.max(0, (b.getTime() - a.getTime()) / 1000);
+    const addCount = (obj, key, amount = 1) => { obj[key] = (obj[key] || 0) + amount; };
+    const topObject = (obj, limit = null) => Object.fromEntries(Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0, limit || undefined));
+    const fmtDate = v => v ? new Date(v).toLocaleString("pt-BR") : "-";
+    const fmtDuration = s => {
+      s = Math.max(0, Math.round(s || 0));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      if (h) return h + "h " + String(m).padStart(2, "0") + "m";
+      if (m) return m + "m " + String(sec).padStart(2, "0") + "s";
+      return sec + "s";
+    };
+    const esc = v => String(v ?? "").replace(/[&<>"']/g, ch => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[ch]));
+
+    function inferEaFromTag(tag) {
+      const match = /^4\.(\d+)\./.exec(tag || "");
+      if (!match) return null;
+      const minor = Number(match[1]);
+      return minor >= 1 && minor <= 9 ? `0.${minor}` : null;
+    }
+    function inferEaFromDate(date) {
+      for (const [version, , startedAt] of RELEASE_WINDOWS) if (date >= new Date(startedAt)) return version;
+      return null;
+    }
+    function normalizeClass(className) {
+      if (!className) return null;
+      if (BASE_CLASSES.has(className)) return className;
+      return ASCENDANCY_TO_BASE.get(className.toLowerCase()) || className;
+    }
+    function categorizeArea(area) {
+      if (area.includes("Hideout")) return ["Hideout", "Hideout"];
+      const act = /^G(\d+)_/.exec(area);
+      if (act) return [`Act ${Number(act[1])}`, "Campaign"];
+      if (area.toLowerCase().includes("town")) return ["Town", "Town"];
+      if (area.toLowerCase().startsWith("map") || area.toLowerCase().includes("atlas")) return ["Endgame", "Endgame"];
+      return ["Other", "Other"];
+    }
+    function cleanLeagueName(value) {
+      return String(value || "").replace(/\s+/g, " ").replace(/[;,.]+$/g, "").trim();
+    }
+    function leagueType(name) {
+      const lower = String(name || "").toLowerCase();
+      if (!name) return "Unknown";
+      if (lower.includes("hcssf") || (lower.includes("hardcore") && lower.includes("ssf"))) return "Hardcore SSF";
+      if (lower.includes("solo self") || /\bssf\b/i.test(name)) return "SSF";
+      if (lower.includes("hardcore")) return "Hardcore";
+      if (lower === "standard") return "Standard";
+      if (lower.includes("race") || lower.includes("event")) return "Private/Event";
+      return "Private/Custom";
+    }
+    function tradeLeagueHint(message) {
+      if (!/^@(?:To|From)\b/i.test(message)) return null;
+      if (!/(stash tab|倉庫頁|보관함|aba|sección|секция|ลีก)/i.test(message)) return null;
+      for (const pattern of TRADE_LEAGUE_PATTERNS) {
+        const match = pattern.exec(message);
+        const league = cleanLeagueName(match?.groups?.league);
+        if (league) return league;
+      }
+      return null;
+    }
+    function slug(value) {
+      return String(value || "indefinida").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "indefinida";
+    }
+
+    function parseUsefulLine(line, events, metadata) {
+      const opening = LOG_OPENING.exec(line);
+      if (opening) {
+        const ts = parseDate(opening[1]);
+        events.push({ ts, kind: "session_start", data: {} });
+        metadata.firstTimestamp ||= ts;
+        metadata.lastTimestamp = ts;
+        return;
+      }
+      const parsed = LOG_PREFIX.exec(line);
+      if (!parsed) return;
+      const ts = parseDate(parsed.groups.date);
+      const message = parsed.groups.message;
+      metadata.firstTimestamp ||= ts;
+      metadata.lastTimestamp = ts;
+
+      const userAgent = USER_AGENT.exec(message);
+      if (userAgent) {
+        const tag = userAgent.groups.tag;
+        addCount(metadata.clientTags, tag);
+        events.push({ ts, kind: "user_agent", data: { tag, eaVersion: inferEaFromTag(tag) } });
+        return;
+      }
+      const area = AREA.exec(message);
+      if (area) {
+        const [act, category] = categorizeArea(area.groups.area);
+        events.push({ ts, kind: "area", data: { level: Number(area.groups.level), area: area.groups.area, seed: area.groups.seed, act, category } });
+        return;
+      }
+      const level = LEVEL_UP.exec(message);
+      if (level) {
+        events.push({ ts, kind: "level_up", data: {
+          character: level.groups.character.trim(),
+          class: level.groups.className,
+          baseClass: normalizeClass(level.groups.className),
+          level: Number(level.groups.level),
+        }});
+        return;
+      }
+      const passive = PASSIVE.exec(message);
+      if (passive) {
+        events.push({ ts, kind: "passive", data: {
+          action: passive.groups.action,
+          id: passive.groups.id,
+          name: passive.groups.name.trim(),
+        }});
+        return;
+      }
+      const leagueHint = tradeLeagueHint(message);
+      if (leagueHint) {
+        events.push({ ts, kind: "league_hint", data: { league: leagueHint, type: leagueType(leagueHint), source: "trade_whisper" } });
+        return;
+      }
+      if (message.includes("[WINDOW] Lost focus")) events.push({ ts, kind: "focus_lost", data: {} });
+      else if (message.includes("[WINDOW] Gained focus")) events.push({ ts, kind: "focus_gained", data: {} });
+      else if (message.includes("AFK mode is now ON") || message.includes("Modo LDT Ativado")) events.push({ ts, kind: "afk_on", data: {} });
+      else if (message.includes("AFK mode is now OFF") || message.includes("Modo LDT Desativado")) events.push({ ts, kind: "afk_off", data: {} });
+    }
+
+    async function parseFile(file, onProgress) {
+      const events = [];
+      const metadata = { sourcePath: file.name, fileSize: file.size, lineCount: 0, firstTimestamp: null, lastTimestamp: null, clientTags: {} };
+      const decoder = new TextDecoder("utf-8");
+      const reader = file.stream().getReader();
+      let buffer = "";
+      let bytesRead = 0;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        bytesRead += value.byteLength;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          metadata.lineCount++;
+          parseUsefulLine(line, events, metadata);
+        }
+        onProgress?.(bytesRead, file.size, metadata.lineCount);
+        await new Promise(requestAnimationFrame);
+      }
+      buffer += decoder.decode();
+      if (buffer) {
+        metadata.lineCount++;
+        parseUsefulLine(buffer, events, metadata);
+      }
+      events.sort((a, b) => a.ts - b.ts);
+      metadata.firstTimestamp = metadata.firstTimestamp?.toISOString() || null;
+      metadata.lastTimestamp = metadata.lastTimestamp?.toISOString() || null;
+      metadata.clientTags = topObject(metadata.clientTags);
+      return { events, metadata };
+    }
+
+    function buildCampaigns(events, cooldownMinutes = 25) {
+      const campaigns = [];
+      let lastStart = null;
+      for (const event of events) {
+        if (event.kind !== "area") continue;
+        if (event.data.area !== "G1_1" || event.data.level !== 1) continue;
+        if (lastStart && secondsBetween(lastStart, event.ts) < cooldownMinutes * 60) continue;
+        if (campaigns.length) campaigns[campaigns.length - 1].end = event.ts;
+        campaigns.push({ index: campaigns.length + 1, start: event.ts, end: null, events: [] });
+        lastStart = event.ts;
+      }
+      if (!campaigns.length) return events.length ? [{ index: 1, start: events[0].ts, end: events.at(-1).ts, events }] : [];
+      for (const campaign of campaigns) campaign.end ||= events.at(-1)?.ts || campaign.start;
+      let idx = 0;
+      for (const event of events) {
+        while (idx + 1 < campaigns.length && campaigns[idx + 1].start <= event.ts) idx++;
+        const campaign = campaigns[idx];
+        if (campaign.start <= event.ts && event.ts < campaign.end) campaign.events.push(event);
+      }
+      return campaigns;
+    }
+    function mergeWindows(windows) {
+      if (!windows.length) return [];
+      const sorted = windows.slice().sort((a,b)=>a[0]-b[0]);
+      const merged = [sorted[0]];
+      for (const [start, end] of sorted.slice(1)) {
+        const last = merged.at(-1);
+        if (start <= last[1]) last[1] = new Date(Math.max(last[1], end));
+        else merged.push([start, end]);
+      }
+      return merged;
+    }
+    const windowSeconds = windows => mergeWindows(windows).reduce((sum, [a,b]) => sum + secondsBetween(a,b), 0);
+    function summarizeIntervals(events, start, end) {
+      const areas = events.filter(e => e.kind === "area");
+      const actSeconds = {}, areaSeconds = {}, categorySeconds = {};
+      let inactiveGapSeconds = 0;
+      const cap = 3600;
+      areas.forEach((event, index) => {
+        const next = areas[index + 1]?.ts || end;
+        let delta = secondsBetween(event.ts, next);
+        if (delta > cap) { inactiveGapSeconds += delta - cap; delta = cap; }
+        addCount(actSeconds, event.data.act, delta);
+        addCount(areaSeconds, event.data.area, delta);
+        addCount(categorySeconds, event.data.category, delta);
+      });
+      return { actSeconds: topObject(actSeconds), areaSecondsTop: topObject(areaSeconds, 20), categorySeconds: topObject(categorySeconds), activeSeconds: Object.values(categorySeconds).reduce((s,v)=>s+v,0), inactiveGapSeconds, areaCount: areas.length };
+    }
+    function summarizeStateWindows(events, start, end) {
+      const afkWindows = [], focusWindows = [], passiveWindows = [];
+      let afkStart = null, focusStart = null;
+      for (const event of events) {
+        if (event.kind === "afk_on") afkStart = event.ts;
+        else if (event.kind === "afk_off" && afkStart) { afkWindows.push([afkStart, event.ts]); afkStart = null; }
+        else if (event.kind === "focus_lost") focusStart = event.ts;
+        else if (event.kind === "focus_gained" && focusStart) { focusWindows.push([focusStart, event.ts]); focusStart = null; }
+        else if (event.kind === "passive") passiveWindows.push([new Date(Math.max(start, event.ts - 45000)), new Date(Math.min(end, event.ts.getTime() + 75000))]);
+      }
+      if (afkStart) afkWindows.push([afkStart, end]);
+      if (focusStart) focusWindows.push([focusStart, end]);
+      return { afkSeconds: windowSeconds(afkWindows), focusLostSeconds: windowSeconds(focusWindows), passiveTreeSecondsEstimated: windowSeconds(passiveWindows) };
+    }
+    function summarizeCharacters(events) {
+      const rows = new Map();
+      for (const event of events) {
+        if (event.kind !== "level_up") continue;
+        const key = event.data.character;
+        if (!rows.has(key)) rows.set(key, { character:key, levelUps:0, minLevel:null, maxLevel:null, classes:{}, baseClasses:{} });
+        const row = rows.get(key);
+        row.levelUps++;
+        row.minLevel = row.minLevel === null ? event.data.level : Math.min(row.minLevel, event.data.level);
+        row.maxLevel = row.maxLevel === null ? event.data.level : Math.max(row.maxLevel, event.data.level);
+        addCount(row.classes, event.data.class);
+        if (event.data.baseClass) addCount(row.baseClasses, event.data.baseClass);
+      }
+      const characters = [...rows.values()].map(row => ({
+        character: row.character, levelUps: row.levelUps, minLevel: row.minLevel, maxLevel: row.maxLevel,
+        class: Object.keys(topObject(row.classes))[0] || null,
+        baseClass: Object.keys(topObject(row.baseClasses))[0] || null,
+        classes: topObject(row.classes),
+      })).sort((a,b)=>b.levelUps-a.levelUps || (b.maxLevel||0)-(a.maxLevel||0));
+      return { primary: characters[0] || null, characters: characters.slice(0, 10) };
+    }
+    function summarizePassives(events) {
+      const passiveCounts = {};
+      let allocated = 0, unallocated = 0;
+      for (const event of events) {
+        if (event.kind !== "passive") continue;
+        if (event.data.action === "allocated") {
+          allocated++;
+          addCount(passiveCounts, `${event.data.id} | ${event.data.name}`);
+        } else unallocated++;
+      }
+      return { allocatedCount: allocated, unallocatedCount: unallocated, topPassives: topObject(passiveCounts, 15) };
+    }
+    function summarizeVersions(events, start) {
+      const tags = {}, versions = {};
+      for (const event of events) if (event.kind === "user_agent") { addCount(tags, event.data.tag); if (event.data.eaVersion) addCount(versions, event.data.eaVersion); }
+      return { eaVersion: Object.keys(topObject(versions))[0] || inferEaFromDate(start), clientTags: topObject(tags), versionSource: Object.keys(versions).length ? "client_tag" : "date_window" };
+    }
+    function summarizeLeagues(events) {
+      const tradeHints = {};
+      for (const event of events) if (event.kind === "league_hint") addCount(tradeHints, event.data.league);
+      const ordered = Object.entries(topObject(tradeHints));
+      if (!ordered.length) return [{ name: "Indefinida", type: "Unknown", source: "not_found", hints: {} }];
+      return ordered.map(([name, count]) => ({ name, type: leagueType(name), source: "trade_whisper", tradeWhisperCount: count, hints: topObject(tradeHints, 8) }));
+    }
+    function campaignToRows(campaign) {
+      const characterSummary = summarizeCharacters(campaign.events);
+      const passives = summarizePassives(campaign.events);
+      const intervals = summarizeIntervals(campaign.events, campaign.start, campaign.end);
+      const states = summarizeStateWindows(campaign.events, campaign.start, campaign.end);
+      const primary = characterSummary.primary;
+      const baseId = `campaign_${String(campaign.index).padStart(3, "0")}`;
+      const leagues = summarizeLeagues(campaign.events);
+      const base = {
+        id: baseId,
+        sourceCampaignId: baseId,
+        index: campaign.index, start: campaign.start.toISOString(), end: campaign.end.toISOString(),
+        wallSeconds: secondsBetween(campaign.start, campaign.end), activeSeconds: intervals.activeSeconds,
+        signalCount: campaign.events.length,
+        version: summarizeVersions(campaign.events, campaign.start),
+        character: primary, characters: characterSummary.characters, passives,
+        timing: { ...intervals, ...states, hideoutSeconds: intervals.categorySeconds.Hideout || 0, townSeconds: intervals.categorySeconds.Town || 0, campaignAreaSeconds: intervals.categorySeconds.Campaign || 0 },
+      };
+      return leagues.map((league, index) => ({
+        ...base,
+        id: leagues.length > 1 ? `${baseId}__${slug(league.name)}` : baseId,
+        duplicateReason: leagues.length > 1 ? "multiple_trade_whisper_leagues" : null,
+        league,
+        leagueVariantIndex: index + 1,
+      }));
+    }
+    function makeAnalysis(events, metadata) {
+      const sourceCampaigns = buildCampaigns(events);
+      const campaigns = sourceCampaigns.flatMap(campaignToRows);
+      const versionCounts = {}, baseClassCounts = {}, leagueCounts = {};
+      for (const campaign of campaigns) {
+        addCount(versionCounts, campaign.version.eaVersion || "unknown");
+        addCount(baseClassCounts, campaign.character?.baseClass || "unknown");
+        addCount(leagueCounts, campaign.league?.name || "Indefinida");
+      }
+      return {
+        generatedAt: new Date().toISOString(),
+        metadata,
+        summary: {
+          campaignCount: campaigns.length,
+          sourceCampaignCount: sourceCampaigns.length,
+          duplicatedCampaignCount: campaigns.length - sourceCampaigns.length,
+          totalWallSeconds: campaigns.reduce((s,c)=>s+c.wallSeconds,0),
+          versionCounts: topObject(versionCounts),
+          baseClassCounts: topObject(baseClassCounts),
+          leagueCounts: topObject(leagueCounts),
+        },
+        campaigns,
+      };
+    }
+
+    function fillFilters() {
+      const campaigns = analysis.campaigns || [];
+      const uniq = a => [...new Set(a.filter(Boolean))].sort();
+      versionFilter.innerHTML = '<option value="">Versao: todas</option>' + uniq(campaigns.map(c=>c.version?.eaVersion || "unknown")).map(v=>`<option>${esc(v)}</option>`).join("");
+      classFilter.innerHTML = '<option value="">Classe: todas</option>' + uniq(campaigns.map(c=>c.character?.baseClass || "unknown")).map(v=>`<option>${esc(v)}</option>`).join("");
+      leagueFilter.innerHTML = '<option value="">Liga: todas</option>' + uniq(campaigns.map(c=>c.league?.name || "Indefinida")).map(v=>`<option>${esc(v)}</option>`).join("");
+    }
+    function filteredCampaigns() {
+      const q = search.value.trim().toLowerCase(), vf = versionFilter.value, cf = classFilter.value, lf = leagueFilter.value;
+      return (analysis.campaigns || []).filter(c => {
+        const text = [c.id,c.sourceCampaignId,c.version?.eaVersion,c.league?.name,c.league?.type,c.character?.character,c.character?.baseClass,c.character?.class].join(" ").toLowerCase();
+        if (q && !text.includes(q)) return false;
+        if (vf && (c.version?.eaVersion || "unknown") !== vf) return false;
+        if (cf && (c.character?.baseClass || "unknown") !== cf) return false;
+        if (lf && (c.league?.name || "Indefinida") !== lf) return false;
+        return true;
+      });
+    }
+    const metric = (label, value) => `<div class="metric"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+    function renderFileFacts() {
+      const meta = analysis.metadata || {};
+      fileFacts.innerHTML = [
+        metric("Tamanho", meta.fileSize ? (meta.fileSize / 1024 / 1024).toFixed(1) + " MB" : "-"),
+        metric("Analisado em", fmtDate(analysis.generatedAt)),
+        metric("Ligas detectadas", Object.keys(analysis.summary.leagueCounts || {}).filter(name => name !== "Indefinida").length),
+        metric("Linhas", (meta.lineCount || 0).toLocaleString("pt-BR")),
+        metric("Inicio logs", fmtDate(meta.firstTimestamp)),
+        metric("Fim logs", fmtDate(meta.lastTimestamp)),
+      ].join("");
+    }
+    function renderMetrics(rows) {
+      const active = rows.reduce((s,c)=>s+((c.activeSeconds ?? c.wallSeconds) || 0),0);
+      const hideout = rows.reduce((s,c)=>s+(c.timing?.hideoutSeconds || 0),0);
+      const afk = rows.reduce((s,c)=>s+(c.timing?.afkSeconds || 0),0);
+      const passive = rows.reduce((s,c)=>s+(c.timing?.passiveTreeSecondsEstimated || 0),0);
+      metrics.innerHTML = [
+        metric("Campanhas", rows.length),
+        metric("Tempo ativo", fmtDuration(active)),
+        metric("Hideout", fmtDuration(hideout)),
+        metric("AFK", fmtDuration(afk)),
+        metric("Passive tree", fmtDuration(passive)),
+        metric("Duplicadas", rows.filter(c => c.duplicateReason).length),
+      ].join("");
+    }
+    function barCard(title, data, color = "var(--accent)", duration = true) {
+      const entries = Object.entries(data || {}).sort((a,b)=>b[1]-a[1]).slice(0,10);
+      const max = Math.max(1, ...entries.map(x=>x[1]));
+      return `<div class="card detail"><h3>${title}</h3><div class="bars">${entries.map(([label,value]) => `<div class="previewRow"><span class="previewLabel" title="${esc(label)}">${esc(label)}</span><span class="barTrack"><span class="barFill" style="width:${Math.max(1,value/max*100)}%;background:${color}"></span></span><span class="barValue">${duration ? fmtDuration(value) : value}</span></div>`).join("") || '<div class="muted">Sem dados.</div>'}</div></div>`;
+    }
+    function renderList(rows) {
+      if (!rows.length) { campaignList.innerHTML = '<div class="muted">Nenhuma campanha para estes filtros.</div>'; detail.innerHTML = ""; return; }
+      if (!rows.some(c => c.id === selectedId)) selectedId = rows[0].id;
+      campaignList.innerHTML = rows.map(c => {
+        const ch = c.character?.character || "Personagem indefinido";
+        const klass = c.character?.baseClass || c.character?.class || "classe incerta";
+        const league = c.league?.name || "Indefinida";
+        return `<button class="run ${c.id === selectedId ? "active" : ""}" data-id="${c.id}">
+          <div class="runTop"><div class="runTitle">${esc(ch)}</div><span class="pill">${esc(c.version?.eaVersion || "-")} · ${esc(league)}</span></div>
+          <div class="muted">${esc(klass)} · ${fmtDate(c.start)} · ativo ${fmtDuration(c.activeSeconds ?? c.wallSeconds)}</div>
+          <div class="muted">${c.league?.source === "trade_whisper" ? "liga por trade whisper" : "liga nao detectada"} · ${c.passives?.allocatedCount || 0} passivas alocadas</div>
+        </button>`;
+      }).join("");
+      campaignList.querySelectorAll("button").forEach(btn => btn.onclick = () => { selectedId = btn.dataset.id; renderDashboard(); });
+    }
+    function renderDetail(c) {
+      const ch = c.character || {};
+      const tags = Object.keys(c.version?.clientTags || {}).join(", ") || "-";
+      const rows = (c.characters || []).map(r => `<tr><td>${esc(r.character)}</td><td>${esc(r.baseClass || r.class || "-")}</td><td>${r.minLevel ?? "-"}-${r.maxLevel ?? "-"}</td><td>${r.levelUps}</td></tr>`).join("");
+      const cells = [
+        ["Versao EA", c.version?.eaVersion || "-", tags],
+        ["Liga", c.league?.name || "Indefinida", `${c.league?.source || "not_found"} · ${c.league?.type || "Unknown"}${c.duplicateReason ? " · campanha duplicada" : ""}`],
+        ["Classe", ch.baseClass || ch.class || "-", "detectada por level-up"],
+        ["Passivas alocadas", c.passives?.allocatedCount || 0, `${c.passives?.unallocatedCount || 0} removidas`],
+        ["Tempo ativo", fmtDuration(c.activeSeconds ?? c.wallSeconds), "areas capadas em 1h"],
+        ["Hideout", fmtDuration(c.timing?.hideoutSeconds), ""],
+        ["AFK", fmtDuration(c.timing?.afkSeconds), ""],
+        ["Foco perdido", fmtDuration(c.timing?.focusLostSeconds), "proxy para pause/alt-tab"],
+        ["Passive tree", fmtDuration(c.timing?.passiveTreeSecondsEstimated), "estimado"],
+      ];
+      detail.innerHTML = `<h3>${esc(ch.character || c.id)}</h3><div class="muted">${fmtDate(c.start)} ate ${fmtDate(c.end)}${c.duplicateReason ? " · duplicada por multiplas ligas em trade whisper" : ""}</div>
+        <div class="detailGrid">${cells.map(x=>`<div class="small"><div class="label">${x[0]}</div><div class="value">${esc(x[1])}</div><div class="muted">${esc(x[2])}</div></div>`).join("")}</div>
+        <div class="split">${barCard("Tempo por ato", c.timing?.actSeconds, "var(--green)")}${barCard("Top passivas brutas", c.passives?.topPassives, "var(--blue)", false)}</div>
+        <div class="split">${barCard("Top areas", c.timing?.areaSecondsTop, "var(--accent)")}<div class="card detail"><h3>Personagens candidatos</h3><table><thead><tr><th>Nome</th><th>Classe</th><th>Level</th><th>Ups</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">Sem level-up detectado.</td></tr>'}</tbody></table></div></div>`;
+    }
+    function renderDashboard() {
+      const rows = filteredCampaigns();
+      renderMetrics(rows);
+      renderList(rows);
+      const selected = rows.find(c => c.id === selectedId) || rows[0];
+      if (selected) renderDetail(selected);
+    }
+    function setProgress(bytes, total, lines) {
+      progressWrap.style.display = "block";
+      const pct = total ? Math.min(100, bytes / total * 100) : 0;
+      progressBar.style.width = pct.toFixed(1) + "%";
+      progressText.textContent = `Processando ${pct.toFixed(1)}% · ${lines.toLocaleString("pt-BR")} linhas`;
+    }
+    function showError(message) {
+      errorBox.textContent = message;
+      errorBox.style.display = "block";
+    }
+    async function analyzeSelectedFile(file) {
+      errorBox.style.display = "none";
+      progressWrap.style.display = "block";
+      progressText.textContent = "Lendo arquivo...";
+      progressBar.style.width = "0%";
+      downloadJsonButton.disabled = true;
+      try {
+        const parsed = await parseFile(file, setProgress);
+        analysis = makeAnalysis(parsed.events, parsed.metadata);
+        selectedId = analysis.campaigns[0]?.id || null;
+        source.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB · gerado em ${fmtDate(analysis.generatedAt)}`;
+        fillFilters();
+        renderFileFacts();
+        renderDashboard();
+        hero.style.display = "none";
+        app.style.display = "block";
+        downloadJsonButton.disabled = false;
+        progressText.textContent = `Concluido: ${analysis.summary.campaignCount} campanhas em ${analysis.metadata.lineCount.toLocaleString("pt-BR")} linhas`;
+      } catch (err) {
+        showError(err?.message || String(err));
+      }
+    }
+
+    chooseButton.onclick = () => fileInput.click();
+    newFileButton.onclick = () => { hero.style.display = "grid"; app.style.display = "none"; fileInput.click(); };
+    fileInput.onchange = event => {
+      const file = event.target.files?.[0];
+      if (file) analyzeSelectedFile(file);
+    };
+    for (const eventName of ["dragenter", "dragover"]) {
+      dropZone.addEventListener(eventName, event => { event.preventDefault(); dropZone.classList.add("dragover"); });
+    }
+    for (const eventName of ["dragleave", "drop"]) {
+      dropZone.addEventListener(eventName, event => { event.preventDefault(); dropZone.classList.remove("dragover"); });
+    }
+    dropZone.addEventListener("drop", event => {
+      const file = event.dataTransfer.files?.[0];
+      if (file) analyzeSelectedFile(file);
+    });
+    downloadJsonButton.onclick = () => {
+      if (!analysis) return;
+      const blob = new Blob([JSON.stringify(analysis, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "poe2-analysis.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    ["search", "versionFilter", "classFilter", "leagueFilter"].forEach(id => {
+      document.getElementById(id).addEventListener("input", renderDashboard);
+      document.getElementById(id).addEventListener("change", renderDashboard);
+    });
+
+    const heroCtx = heroCanvas.getContext("2d");
+    let visualTime = 0;
+    function drawHero() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const rect = hero.getBoundingClientRect();
+      if (heroCanvas.width !== Math.floor(rect.width * dpr) || heroCanvas.height !== Math.floor(rect.height * dpr)) {
+        heroCanvas.width = Math.floor(rect.width * dpr);
+        heroCanvas.height = Math.floor(rect.height * dpr);
+      }
+      const w = heroCanvas.width, h = heroCanvas.height;
+      heroCtx.setTransform(1, 0, 0, 1, 0, 0);
+      heroCtx.clearRect(0, 0, w, h);
+      heroCtx.fillStyle = "#101314";
+      heroCtx.fillRect(0, 0, w, h);
+      visualTime += 0.008;
+
+      const cols = 18, rows = 10;
+      const padX = w * 0.05, padY = h * 0.1;
+      const usableW = w - padX * 2, usableH = h - padY * 2;
+      const nodes = [];
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const wave = Math.sin(x * 0.7 + visualTime * 3) * 10 + Math.cos(y * 0.9 + visualTime * 2) * 8;
+          nodes.push({
+            x: padX + (x / (cols - 1)) * usableW + wave * dpr,
+            y: padY + (y / (rows - 1)) * usableH + Math.sin((x + y) * .8 + visualTime * 2) * 12 * dpr,
+            a: .16 + ((x + y) % 5) * .035,
+          });
+        }
+      }
+      heroCtx.lineWidth = 1 * dpr;
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (i % cols !== cols - 1) lineToNode(n, nodes[i + 1], "rgba(224,182,90,.12)");
+        if (i + cols < nodes.length) lineToNode(n, nodes[i + cols], "rgba(116,169,215,.08)");
+      }
+      for (const [i, n] of nodes.entries()) {
+        const r = ((i % 7) === 0 ? 3.6 : 2.2) * dpr;
+        heroCtx.beginPath();
+        heroCtx.fillStyle = (i % 7) === 0 ? "rgba(224,182,90,.65)" : `rgba(174,183,177,${n.a})`;
+        heroCtx.arc(n.x, n.y, r, 0, Math.PI * 2);
+        heroCtx.fill();
+      }
+      for (let i = 0; i < 7; i++) {
+        const x = w * (.58 + i * .055);
+        const height = h * (.08 + ((Math.sin(visualTime * 4 + i) + 1) * .08));
+        heroCtx.fillStyle = i % 2 ? "rgba(112,197,143,.26)" : "rgba(224,182,90,.30)";
+        heroCtx.fillRect(x, h * .78 - height, 10 * dpr, height);
+      }
+      requestAnimationFrame(drawHero);
+    }
+    function lineToNode(a, b, color) {
+      heroCtx.beginPath();
+      heroCtx.strokeStyle = color;
+      heroCtx.moveTo(a.x, a.y);
+      heroCtx.lineTo(b.x, b.y);
+      heroCtx.stroke();
+    }
+    requestAnimationFrame(drawHero);
+  </script>
+</body>
+</html>
