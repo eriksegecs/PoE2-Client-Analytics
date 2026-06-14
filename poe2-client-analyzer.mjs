@@ -176,8 +176,14 @@ function displayMapName(area) {
   return name || area || "Endgame map";
 }
 
+const ANOMALY_MAP_NAMES = new Set(["the jade isles", "sacred reservoir", "derelict mansion", "sealed vault"]);
+
+function normalizedMapName(value) {
+  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function isAnomalyMapInstance(instance) {
-  return /^MapUniqueReactor_/i.test(instance.area || "") || /anom/i.test(`${instance.name || ""} ${instance.area || ""}`);
+  return [instance.name, displayMapName(instance.area)].some((name) => ANOMALY_MAP_NAMES.has(normalizedMapName(name)));
 }
 
 function addCount(object, key, amount = 1) {
