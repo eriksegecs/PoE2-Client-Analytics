@@ -359,6 +359,7 @@
     const LOG_OPENING = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}) \*{5} LOG FILE OPENING/;
     const USER_AGENT = /User agent: PoE poe2_production\/tags\/(?<tag>\S+)/;
     const AREA = /Generating level (?<level>\d+) area "(?<area>[^"]+)" with seed (?<seed>\d+)/;
+    const SCENE = /\[SCENE\] Set Source \[(?<scene>.+?)\]/;
     const LEVEL_UP = /: (?<character>.+?) \((?<className>[^)]+)\) is now level (?<level>\d+)/;
     const PASSIVE = /Successfully (?<action>unallocated|allocated) passive skill id: (?<id>[^,]+), name: (?<name>.+)/;
     const TRADE_LEAGUE_PATTERNS = [
@@ -440,6 +441,25 @@
     function slug(value) {
       return String(value || "indefinida").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "indefinida";
     }
+    function isEndgameMapArea(area) {
+      return /^Map/i.test(area || "");
+    }
+    function cleanSceneSource(source) {
+      const value = String(source || "").trim();
+      if (!value || value === "(null)" || value === "(unknown)" || value === "Atlas") return null;
+      if (/hideout/i.test(value) || /\btown\b/i.test(value) || /^Act \d+/i.test(value)) return null;
+      return value;
+    }
+    function displayMapName(area) {
+      return String(area || "")
+        .replace(/^Map/i, "")
+        .replace(/^UberBoss_/i, "")
+        .replace(/_NoBoss$/i, "")
+        .replace(/_/g, " ")
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replace(/\s+/g, " ")
+        .trim() || area || "Endgame map";
+    }
 
     function parseUsefulLine(line, events, metadata) {
       const opening = LOG_OPENING.exec(line);
@@ -468,6 +488,11 @@
       if (area) {
         const [act, category] = categorizeArea(area.groups.area);
         events.push({ ts, kind: "area", data: { level: Number(area.groups.level), area: area.groups.area, seed: area.groups.seed, act, category } });
+        return;
+      }
+      const scene = SCENE.exec(message);
+      if (scene && scene.groups.scene !== "(null)") {
+        events.push({ ts, kind: "scene", data: { source: scene.groups.scene } });
         return;
       }
       const level = LEVEL_UP.exec(message);
@@ -581,6 +606,69 @@
       });
       return { actSeconds: topObject(actSeconds), areaSecondsTop: topObject(areaSeconds, 20), categorySeconds: topObject(categorySeconds), activeSeconds: Object.values(categorySeconds).reduce((s,v)=>s+v,0), inactiveGapSeconds, areaCount: areas.length };
     }
+    function sceneNameNearArea(areaEvent, nextAreaTs, scenes) {
+      const upperBound = Math.min(nextAreaTs?.getTime() || Infinity, areaEvent.ts.getTime() + 15000);
+      for (const scene of scenes) {
+        if (scene.ts < areaEvent.ts) continue;
+        if (scene.ts.getTime() > upperBound) break;
+        const name = cleanSceneSource(scene.data.source);
+        if (name) return name;
+      }
+      return null;
+    }
+    function summarizeEndgameMaps(events) {
+      const areas = events.filter(e => e.kind === "area");
+      const scenes = events.filter(e => e.kind === "scene");
+      const instances = new Map();
+      const orderedInstances = [];
+      let entryCount = 0;
+      areas.forEach((event, index) => {
+        if (!isEndgameMapArea(event.data.area)) return;
+        entryCount++;
+        const key = `${event.data.area}|${event.data.seed}`;
+        let instance = instances.get(key);
+        if (!instance) {
+          instance = {
+            area: event.data.area,
+            seed: event.data.seed,
+            name: displayMapName(event.data.area),
+            level: event.data.level,
+            entries: 0,
+            firstSeen: event.ts,
+            lastSeen: event.ts,
+          };
+          instances.set(key, instance);
+          orderedInstances.push(instance);
+        }
+        instance.entries++;
+        instance.lastSeen = event.ts;
+        instance.level = Math.max(instance.level, event.data.level);
+        const sceneName = sceneNameNearArea(event, areas[index + 1]?.ts, scenes);
+        if (sceneName) instance.name = sceneName;
+      });
+      const mapCounts = {}, mapEntryCounts = {}, internalAreaCounts = {};
+      for (const instance of orderedInstances) {
+        addCount(mapCounts, instance.name);
+        addCount(mapEntryCounts, instance.name, instance.entries);
+        addCount(internalAreaCounts, instance.area);
+      }
+      return {
+        endgameMapCount: orderedInstances.length,
+        endgameMapEntryCount: entryCount,
+        endgameMapCounts: topObject(mapCounts),
+        endgameMapEntryCounts: topObject(mapEntryCounts),
+        internalAreaCounts: topObject(internalAreaCounts),
+        recentEndgameMaps: orderedInstances.slice(-12).map(instance => ({
+          name: instance.name,
+          area: instance.area,
+          seed: instance.seed,
+          level: instance.level,
+          entries: instance.entries,
+          firstSeen: instance.firstSeen.toISOString(),
+          lastSeen: instance.lastSeen.toISOString(),
+        })),
+      };
+    }
     function summarizeStateWindows(events, start, end) {
       const afkWindows = [], focusWindows = [], passiveWindows = [];
       let afkStart = null, focusStart = null;
@@ -640,10 +728,31 @@
       if (!ordered.length) return [{ name: "Indefinida", type: "Unknown", source: "not_found", hints: {} }];
       return ordered.map(([name, count]) => ({ name, type: leagueType(name), source: "trade_whisper", tradeWhisperCount: count, hints: topObject(tradeHints, 8) }));
     }
+    function aggregateEndgameMaps(campaigns) {
+      const seen = new Set();
+      const mapCounts = {}, mapEntryCounts = {};
+      let endgameMapCount = 0, endgameMapEntryCount = 0;
+      for (const campaign of campaigns) {
+        if (seen.has(campaign.sourceCampaignId)) continue;
+        seen.add(campaign.sourceCampaignId);
+        const maps = campaign.maps || {};
+        endgameMapCount += maps.endgameMapCount || 0;
+        endgameMapEntryCount += maps.endgameMapEntryCount || 0;
+        for (const [name, count] of Object.entries(maps.endgameMapCounts || {})) addCount(mapCounts, name, count);
+        for (const [name, count] of Object.entries(maps.endgameMapEntryCounts || {})) addCount(mapEntryCounts, name, count);
+      }
+      return {
+        endgameMapCount,
+        endgameMapEntryCount,
+        endgameMapCounts: topObject(mapCounts),
+        endgameMapEntryCounts: topObject(mapEntryCounts),
+      };
+    }
     function campaignToRows(campaign) {
       const characterSummary = summarizeCharacters(campaign.events);
       const passives = summarizePassives(campaign.events);
       const intervals = summarizeIntervals(campaign.events, campaign.start, campaign.end);
+      const maps = summarizeEndgameMaps(campaign.events);
       const states = summarizeStateWindows(campaign.events, campaign.start, campaign.end);
       const primary = characterSummary.primary;
       const baseId = `campaign_${String(campaign.index).padStart(3, "0")}`;
@@ -656,7 +765,8 @@
         signalCount: campaign.events.length,
         version: summarizeVersions(campaign.events, campaign.start),
         character: primary, characters: characterSummary.characters, passives,
-        timing: { ...intervals, ...states, hideoutSeconds: intervals.categorySeconds.Hideout || 0, townSeconds: intervals.categorySeconds.Town || 0, campaignAreaSeconds: intervals.categorySeconds.Campaign || 0 },
+        maps,
+        timing: { ...intervals, ...states, endgameSeconds: intervals.categorySeconds.Endgame || 0, hideoutSeconds: intervals.categorySeconds.Hideout || 0, townSeconds: intervals.categorySeconds.Town || 0, campaignAreaSeconds: intervals.categorySeconds.Campaign || 0 },
       };
       return leagues.map((league, index) => ({
         ...base,
@@ -669,6 +779,7 @@
     function makeAnalysis(events, metadata) {
       const sourceCampaigns = buildCampaigns(events);
       const campaigns = sourceCampaigns.flatMap(campaignToRows);
+      const endgameMaps = aggregateEndgameMaps(campaigns);
       const versionCounts = {}, baseClassCounts = {}, leagueCounts = {};
       for (const campaign of campaigns) {
         addCount(versionCounts, campaign.version.eaVersion || "unknown");
@@ -683,6 +794,10 @@
           sourceCampaignCount: sourceCampaigns.length,
           duplicatedCampaignCount: campaigns.length - sourceCampaigns.length,
           totalWallSeconds: campaigns.reduce((s,c)=>s+c.wallSeconds,0),
+          endgameMapCount: endgameMaps.endgameMapCount,
+          endgameMapEntryCount: endgameMaps.endgameMapEntryCount,
+          endgameMapCounts: endgameMaps.endgameMapCounts,
+          endgameMapEntryCounts: endgameMaps.endgameMapEntryCounts,
           versionCounts: topObject(versionCounts),
           baseClassCounts: topObject(baseClassCounts),
           leagueCounts: topObject(leagueCounts),
@@ -701,13 +816,21 @@
     function filteredCampaigns() {
       const q = search.value.trim().toLowerCase(), vf = versionFilter.value, cf = classFilter.value, lf = leagueFilter.value;
       return (analysis.campaigns || []).filter(c => {
-        const text = [c.id,c.sourceCampaignId,c.version?.eaVersion,c.league?.name,c.league?.type,c.character?.character,c.character?.baseClass,c.character?.class].join(" ").toLowerCase();
+        const text = [c.id,c.sourceCampaignId,c.version?.eaVersion,c.league?.name,c.league?.type,c.character?.character,c.character?.baseClass,c.character?.class,Object.keys(c.maps?.endgameMapCounts || {}).join(" ")].join(" ").toLowerCase();
         if (q && !text.includes(q)) return false;
         if (vf && (c.version?.eaVersion || "unknown") !== vf) return false;
         if (cf && (c.character?.baseClass || "unknown") !== cf) return false;
         if (lf && (c.league?.name || "Indefinida") !== lf) return false;
         return true;
       });
+    }
+    function uniqueSourceRows(rows) {
+      const seen = new Map();
+      for (const row of rows) {
+        const key = row.sourceCampaignId || row.id;
+        if (!seen.has(key)) seen.set(key, row);
+      }
+      return [...seen.values()];
     }
     const metric = (label, value) => `<div class="metric"><div class="label">${label}</div><div class="value">${value}</div></div>`;
     function renderFileFacts() {
@@ -722,12 +845,19 @@
       ].join("");
     }
     function renderMetrics(rows) {
-      const active = rows.reduce((s,c)=>s+((c.activeSeconds ?? c.wallSeconds) || 0),0);
-      const hideout = rows.reduce((s,c)=>s+(c.timing?.hideoutSeconds || 0),0);
-      const afk = rows.reduce((s,c)=>s+(c.timing?.afkSeconds || 0),0);
-      const passive = rows.reduce((s,c)=>s+(c.timing?.passiveTreeSecondsEstimated || 0),0);
+      const uniqueRows = uniqueSourceRows(rows);
+      const active = uniqueRows.reduce((s,c)=>s+((c.activeSeconds ?? c.wallSeconds) || 0),0);
+      const hideout = uniqueRows.reduce((s,c)=>s+(c.timing?.hideoutSeconds || 0),0);
+      const afk = uniqueRows.reduce((s,c)=>s+(c.timing?.afkSeconds || 0),0);
+      const passive = uniqueRows.reduce((s,c)=>s+(c.timing?.passiveTreeSecondsEstimated || 0),0);
+      const endgame = uniqueRows.reduce((s,c)=>s+(c.timing?.endgameSeconds || 0),0);
+      const maps = uniqueRows.reduce((s,c)=>s+(c.maps?.endgameMapCount || 0),0);
+      const mapEntries = uniqueRows.reduce((s,c)=>s+(c.maps?.endgameMapEntryCount || 0),0);
       metrics.innerHTML = [
         metric("Campanhas", rows.length),
+        metric("Mapas endgame", maps),
+        metric("Entradas mapa", mapEntries),
+        metric("Tempo endgame", fmtDuration(endgame)),
         metric("Tempo ativo", fmtDuration(active)),
         metric("Hideout", fmtDuration(hideout)),
         metric("AFK", fmtDuration(afk)),
@@ -747,10 +877,11 @@
         const ch = c.character?.character || "Personagem indefinido";
         const klass = c.character?.baseClass || c.character?.class || "classe incerta";
         const league = c.league?.name || "Indefinida";
+        const maps = c.maps?.endgameMapCount || 0;
         return `<button class="run ${c.id === selectedId ? "active" : ""}" data-id="${c.id}">
           <div class="runTop"><div class="runTitle">${esc(ch)}</div><span class="pill">${esc(c.version?.eaVersion || "-")} · ${esc(league)}</span></div>
           <div class="muted">${esc(klass)} · ${fmtDate(c.start)} · ativo ${fmtDuration(c.activeSeconds ?? c.wallSeconds)}</div>
-          <div class="muted">${c.league?.source === "trade_whisper" ? "liga por trade whisper" : "liga nao detectada"} · ${c.passives?.allocatedCount || 0} passivas alocadas</div>
+          <div class="muted">${maps} mapas endgame · ${c.passives?.allocatedCount || 0} passivas alocadas</div>
         </button>`;
       }).join("");
       campaignList.querySelectorAll("button").forEach(btn => btn.onclick = () => { selectedId = btn.dataset.id; renderDashboard(); });
@@ -759,10 +890,13 @@
       const ch = c.character || {};
       const tags = Object.keys(c.version?.clientTags || {}).join(", ") || "-";
       const rows = (c.characters || []).map(r => `<tr><td>${esc(r.character)}</td><td>${esc(r.baseClass || r.class || "-")}</td><td>${r.minLevel ?? "-"}-${r.maxLevel ?? "-"}</td><td>${r.levelUps}</td></tr>`).join("");
+      const mapNote = `${c.maps?.endgameMapEntryCount || 0} entradas/reentradas`;
       const cells = [
         ["Versao EA", c.version?.eaVersion || "-", tags],
         ["Liga", c.league?.name || "Indefinida", `${c.league?.source || "not_found"} · ${c.league?.type || "Unknown"}${c.duplicateReason ? " · campanha duplicada" : ""}`],
         ["Classe", ch.baseClass || ch.class || "-", "detectada por level-up"],
+        ["Mapas endgame", c.maps?.endgameMapCount || 0, mapNote],
+        ["Tempo endgame", fmtDuration(c.timing?.endgameSeconds), "somente areas Map*"],
         ["Passivas alocadas", c.passives?.allocatedCount || 0, `${c.passives?.unallocatedCount || 0} removidas`],
         ["Tempo ativo", fmtDuration(c.activeSeconds ?? c.wallSeconds), "areas capadas em 1h"],
         ["Hideout", fmtDuration(c.timing?.hideoutSeconds), ""],
@@ -772,8 +906,9 @@
       ];
       detail.innerHTML = `<h3>${esc(ch.character || c.id)}</h3><div class="muted">${fmtDate(c.start)} ate ${fmtDate(c.end)}${c.duplicateReason ? " · duplicada por multiplas ligas em trade whisper" : ""}</div>
         <div class="detailGrid">${cells.map(x=>`<div class="small"><div class="label">${x[0]}</div><div class="value">${esc(x[1])}</div><div class="muted">${esc(x[2])}</div></div>`).join("")}</div>
-        <div class="split">${barCard("Tempo por ato", c.timing?.actSeconds, "var(--green)")}${barCard("Top passivas brutas", c.passives?.topPassives, "var(--blue)", false)}</div>
-        <div class="split">${barCard("Top areas", c.timing?.areaSecondsTop, "var(--accent)")}<div class="card detail"><h3>Personagens candidatos</h3><table><thead><tr><th>Nome</th><th>Classe</th><th>Level</th><th>Ups</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">Sem level-up detectado.</td></tr>'}</tbody></table></div></div>`;
+        <div class="split">${barCard("Top mapas endgame", c.maps?.endgameMapCounts, "var(--red)", false)}${barCard("Tempo por ato", c.timing?.actSeconds, "var(--green)")}</div>
+        <div class="split">${barCard("Top areas", c.timing?.areaSecondsTop, "var(--accent)")}${barCard("Top passivas brutas", c.passives?.topPassives, "var(--blue)", false)}</div>
+        <div class="card detail"><h3>Personagens candidatos</h3><table><thead><tr><th>Nome</th><th>Classe</th><th>Level</th><th>Ups</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">Sem level-up detectado.</td></tr>'}</tbody></table></div>`;
     }
     function renderDashboard() {
       const rows = filteredCampaigns();

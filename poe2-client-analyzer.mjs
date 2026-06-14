@@ -153,6 +153,29 @@ function slug(value) {
     .replace(/^_+|_+$/g, "") || "indefinida";
 }
 
+function isEndgameMapArea(area) {
+  return /^Map/i.test(area || "");
+}
+
+function cleanSceneSource(source) {
+  const value = String(source || "").trim();
+  if (!value || value === "(null)" || value === "(unknown)" || value === "Atlas") return null;
+  if (/hideout/i.test(value) || /\btown\b/i.test(value) || /^Act \d+/i.test(value)) return null;
+  return value;
+}
+
+function displayMapName(area) {
+  const name = String(area || "")
+    .replace(/^Map/i, "")
+    .replace(/^UberBoss_/i, "")
+    .replace(/_NoBoss$/i, "")
+    .replace(/_/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+  return name || area || "Endgame map";
+}
+
 function addCount(object, key, amount = 1) {
   object[key] = (object[key] || 0) + amount;
 }
@@ -375,6 +398,80 @@ function summarizeIntervals(events, start, end) {
   };
 }
 
+function sceneNameNearArea(areaEvent, nextAreaTs, scenes) {
+  const upperBound = Math.min(
+    nextAreaTs?.getTime() || Infinity,
+    areaEvent.ts.getTime() + 15_000,
+  );
+  for (const scene of scenes) {
+    if (scene.ts < areaEvent.ts) continue;
+    if (scene.ts.getTime() > upperBound) break;
+    const name = cleanSceneSource(scene.data.source);
+    if (name) return name;
+  }
+  return null;
+}
+
+function summarizeEndgameMaps(events) {
+  const areas = events.filter((event) => event.kind === "area");
+  const scenes = events.filter((event) => event.kind === "scene");
+  const instances = new Map();
+  const orderedInstances = [];
+  let entryCount = 0;
+
+  areas.forEach((event, index) => {
+    if (!isEndgameMapArea(event.data.area)) return;
+    entryCount += 1;
+    const key = `${event.data.area}|${event.data.seed}`;
+    let instance = instances.get(key);
+    if (!instance) {
+      instance = {
+        area: event.data.area,
+        seed: event.data.seed,
+        name: displayMapName(event.data.area),
+        level: event.data.level,
+        entries: 0,
+        firstSeen: event.ts,
+        lastSeen: event.ts,
+      };
+      instances.set(key, instance);
+      orderedInstances.push(instance);
+    }
+    instance.entries += 1;
+    instance.lastSeen = event.ts;
+    instance.level = Math.max(instance.level, event.data.level);
+
+    const sceneName = sceneNameNearArea(event, areas[index + 1]?.ts, scenes);
+    if (sceneName) instance.name = sceneName;
+  });
+
+  const mapCounts = {};
+  const mapEntryCounts = {};
+  const internalAreaCounts = {};
+  for (const instance of orderedInstances) {
+    addCount(mapCounts, instance.name);
+    addCount(mapEntryCounts, instance.name, instance.entries);
+    addCount(internalAreaCounts, instance.area);
+  }
+
+  return {
+    endgameMapCount: orderedInstances.length,
+    endgameMapEntryCount: entryCount,
+    endgameMapCounts: topObject(mapCounts),
+    endgameMapEntryCounts: topObject(mapEntryCounts),
+    internalAreaCounts: topObject(internalAreaCounts),
+    recentEndgameMaps: orderedInstances.slice(-12).map((instance) => ({
+      name: instance.name,
+      area: instance.area,
+      seed: instance.seed,
+      level: instance.level,
+      entries: instance.entries,
+      firstSeen: instance.firstSeen.toISOString(),
+      lastSeen: instance.lastSeen.toISOString(),
+    })),
+  };
+}
+
 function summarizeStateWindows(events, start, end) {
   const afkWindows = [];
   const focusWindows = [];
@@ -516,10 +613,40 @@ function summarizeLeagues(events) {
   }));
 }
 
+function aggregateEndgameMaps(campaigns) {
+  const seen = new Set();
+  const mapCounts = {};
+  const mapEntryCounts = {};
+  let endgameMapCount = 0;
+  let endgameMapEntryCount = 0;
+
+  for (const campaign of campaigns) {
+    if (seen.has(campaign.sourceCampaignId)) continue;
+    seen.add(campaign.sourceCampaignId);
+    const maps = campaign.maps || {};
+    endgameMapCount += maps.endgameMapCount || 0;
+    endgameMapEntryCount += maps.endgameMapEntryCount || 0;
+    for (const [name, count] of Object.entries(maps.endgameMapCounts || {})) {
+      addCount(mapCounts, name, count);
+    }
+    for (const [name, count] of Object.entries(maps.endgameMapEntryCounts || {})) {
+      addCount(mapEntryCounts, name, count);
+    }
+  }
+
+  return {
+    endgameMapCount,
+    endgameMapEntryCount,
+    endgameMapCounts: topObject(mapCounts),
+    endgameMapEntryCounts: topObject(mapEntryCounts),
+  };
+}
+
 function campaignToRows(campaign) {
   const characterSummary = summarizeCharacters(campaign.events);
   const passiveSummary = summarizePassives(campaign.events);
   const intervals = summarizeIntervals(campaign.events, campaign.start, campaign.end);
+  const maps = summarizeEndgameMaps(campaign.events);
   const states = summarizeStateWindows(campaign.events, campaign.start, campaign.end);
   const version = summarizeVersions(campaign.events, campaign.start);
   const leagues = summarizeLeagues(campaign.events);
@@ -539,9 +666,11 @@ function campaignToRows(campaign) {
     character: primary,
     characters: characterSummary.characters,
     passives: passiveSummary,
+    maps,
     timing: {
       ...intervals,
       ...states,
+      endgameSeconds: intervals.categorySeconds.Endgame || 0,
       hideoutSeconds: intervals.categorySeconds.Hideout || 0,
       townSeconds: intervals.categorySeconds.Town || 0,
       campaignAreaSeconds: intervals.categorySeconds.Campaign || 0,
@@ -561,6 +690,7 @@ async function makeAnalysis(logPath) {
   const { events, metadata } = await parseLog(logPath);
   const sourceCampaigns = buildCampaigns(events);
   const campaigns = sourceCampaigns.flatMap(campaignToRows);
+  const endgameMaps = aggregateEndgameMaps(campaigns);
   const versionCounts = {};
   const baseClassCounts = {};
   const leagueCounts = {};
@@ -581,6 +711,10 @@ async function makeAnalysis(logPath) {
       sourceCampaignCount: sourceCampaigns.length,
       duplicatedCampaignCount: campaigns.length - sourceCampaigns.length,
       totalWallSeconds,
+      endgameMapCount: endgameMaps.endgameMapCount,
+      endgameMapEntryCount: endgameMaps.endgameMapEntryCount,
+      endgameMapCounts: endgameMaps.endgameMapCounts,
+      endgameMapEntryCounts: endgameMaps.endgameMapEntryCounts,
       versionCounts: topObject(versionCounts),
       baseClassCounts: topObject(baseClassCounts),
       leagueCounts: topObject(leagueCounts),
@@ -590,6 +724,7 @@ async function makeAnalysis(logPath) {
       "Classe vem de level-up e pode incluir membros da party.",
       "Liga vem apenas de trade whispers; nomes de personagem nao sao usados para inferir liga.",
       "Campanhas podem ser duplicadas quando trade whispers apontam multiplas ligas.",
+      "Mapas endgame contam areas internas Map* deduplicadas por seed; reentradas ficam separadas.",
       "Passive tree e estimado ao redor de alocacoes/desalocacoes.",
       "Pause nao aparece diretamente no client.txt; foco perdido e AFK ficam separados.",
     ],
@@ -623,17 +758,18 @@ function dashboardHtml(analysis) {
 <script id="analysis-json" type="application/json">${escapeScriptJson(analysis)}</script>
 <script>
 const analysis=JSON.parse(document.getElementById('analysis-json').textContent),campaigns=analysis.campaigns||[];let selectedId=campaigns[0]?.id||null;
-const fmtDate=v=>v?new Date(v).toLocaleString('pt-BR'):'-',fmtDuration=s=>{s=Math.max(0,Math.round(s||0));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),sec=s%60;if(h)return h+'h '+String(m).padStart(2,'0')+'m';if(m)return m+'m '+String(sec).padStart(2,'0')+'s';return sec+'s'},rank={low:1,medium:2,high:3},confText={low:'baixa',medium:'media',high:'alta'};
+const fmtDate=v=>v?new Date(v).toLocaleString('pt-BR'):'-',fmtDuration=s=>{s=Math.max(0,Math.round(s||0));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),sec=s%60;if(h)return h+'h '+String(m).padStart(2,'0')+'m';if(m)return m+'m '+String(sec).padStart(2,'0')+'s';return sec+'s'};
 const esc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+function uniqueSourceRows(rows){const seen=new Map();for(const row of rows){const key=row.sourceCampaignId||row.id;if(!seen.has(key))seen.set(key,row)}return Array.from(seen.values())}
 function fillFilters(){const uniq=a=>[...new Set(a.filter(Boolean))].sort();versionFilter.innerHTML='<option value="">Versao: todas</option>'+uniq(campaigns.map(c=>c.version?.eaVersion||'unknown')).map(v=>'<option>'+esc(v)+'</option>').join('');classFilter.innerHTML='<option value="">Classe: todas</option>'+uniq(campaigns.map(c=>c.character?.baseClass||'unknown')).map(v=>'<option>'+esc(v)+'</option>').join('');leagueFilter.innerHTML='<option value="">Liga: todas</option>'+uniq(campaigns.map(c=>c.league?.name||'Indefinida')).map(v=>'<option>'+esc(v)+'</option>').join('')}
-function filtered(){const q=search.value.trim().toLowerCase(),vf=versionFilter.value,cf=classFilter.value,lf=leagueFilter.value;return campaigns.filter(c=>{const text=[c.id,c.sourceCampaignId,c.version?.eaVersion,c.league?.name,c.league?.type,c.character?.character,c.character?.baseClass,c.character?.class].join(' ').toLowerCase();if(q&&!text.includes(q))return false;if(vf&&(c.version?.eaVersion||'unknown')!==vf)return false;if(cf&&(c.character?.baseClass||'unknown')!==cf)return false;if(lf&&(c.league?.name||'Indefinida')!==lf)return false;return true})}
+function filtered(){const q=search.value.trim().toLowerCase(),vf=versionFilter.value,cf=classFilter.value,lf=leagueFilter.value;return campaigns.filter(c=>{const text=[c.id,c.sourceCampaignId,c.version?.eaVersion,c.league?.name,c.league?.type,c.character?.character,c.character?.baseClass,c.character?.class,Object.keys(c.maps?.endgameMapCounts||{}).join(' ')].join(' ').toLowerCase();if(q&&!text.includes(q))return false;if(vf&&(c.version?.eaVersion||'unknown')!==vf)return false;if(cf&&(c.character?.baseClass||'unknown')!==cf)return false;if(lf&&(c.league?.name||'Indefinida')!==lf)return false;return true})}
 function metric(label,value){return '<div class="metric"><div class="label">'+label+'</div><div class="value">'+value+'</div></div>'}
 function renderFileFacts(){fileFacts.innerHTML=[metric('Tamanho',analysis.metadata.fileSize?((analysis.metadata.fileSize/1024/1024).toFixed(1)+' MB'):'-'),metric('Analisado em',fmtDate(analysis.generatedAt)),metric('Ligas detectadas',Object.keys(analysis.summary.leagueCounts||{}).filter(n=>n!=='Indefinida').length),metric('Linhas',(analysis.metadata.lineCount||0).toLocaleString('pt-BR')),metric('Inicio logs',fmtDate(analysis.metadata.firstTimestamp)),metric('Fim logs',fmtDate(analysis.metadata.lastTimestamp))].join('')}
-function renderMetrics(rows){const total=rows.reduce((s,c)=>s+((c.activeSeconds??c.wallSeconds)||0),0),hideout=rows.reduce((s,c)=>s+(c.timing?.hideoutSeconds||0),0),afk=rows.reduce((s,c)=>s+(c.timing?.afkSeconds||0),0),passive=rows.reduce((s,c)=>s+(c.timing?.passiveTreeSecondsEstimated||0),0);metrics.innerHTML=[metric('Campanhas',rows.length),metric('Tempo ativo',fmtDuration(total)),metric('Hideout',fmtDuration(hideout)),metric('AFK',fmtDuration(afk)),metric('Passive tree',fmtDuration(passive)),metric('Duplicadas',rows.filter(c=>c.duplicateReason).length)].join('')}
-function renderList(rows){if(!rows.length){campaignList.innerHTML='<div class="muted">Nenhuma campanha para estes filtros.</div>';detail.innerHTML='';return}if(!rows.some(c=>c.id===selectedId))selectedId=rows[0].id;campaignList.innerHTML=rows.map(c=>{const ch=c.character?.character||'Personagem indefinido',klass=c.character?.baseClass||c.character?.class||'classe incerta',ver=c.version?.eaVersion||'versao incerta',league=c.league?.name||'Indefinida';return '<button class="run '+(c.id===selectedId?'active':'')+'" data-id="'+c.id+'"><div class="runTop"><div class="runTitle">'+esc(ch)+'</div><span class="pill">'+esc(ver)+' · '+esc(league)+'</span></div><div class="muted">'+esc(klass)+' · '+fmtDate(c.start)+' · ativo '+fmtDuration(c.activeSeconds??c.wallSeconds)+'</div><div class="muted">'+(c.league?.source==='trade_whisper'?'liga por trade whisper':'liga nao detectada')+' · '+(c.passives?.allocatedCount||0)+' passivas alocadas</div></button>'}).join('');campaignList.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedId=b.dataset.id;render()})}
+function renderMetrics(rows){const unique=uniqueSourceRows(rows),total=unique.reduce((s,c)=>s+((c.activeSeconds??c.wallSeconds)||0),0),hideout=unique.reduce((s,c)=>s+(c.timing?.hideoutSeconds||0),0),afk=unique.reduce((s,c)=>s+(c.timing?.afkSeconds||0),0),passive=unique.reduce((s,c)=>s+(c.timing?.passiveTreeSecondsEstimated||0),0),endgame=unique.reduce((s,c)=>s+(c.timing?.endgameSeconds||0),0),maps=unique.reduce((s,c)=>s+(c.maps?.endgameMapCount||0),0),entries=unique.reduce((s,c)=>s+(c.maps?.endgameMapEntryCount||0),0);metrics.innerHTML=[metric('Campanhas',rows.length),metric('Mapas endgame',maps),metric('Entradas mapa',entries),metric('Tempo endgame',fmtDuration(endgame)),metric('Tempo ativo',fmtDuration(total)),metric('Hideout',fmtDuration(hideout)),metric('AFK',fmtDuration(afk)),metric('Passive tree',fmtDuration(passive)),metric('Duplicadas',rows.filter(c=>c.duplicateReason).length)].join('')}
+function renderList(rows){if(!rows.length){campaignList.innerHTML='<div class="muted">Nenhuma campanha para estes filtros.</div>';detail.innerHTML='';return}if(!rows.some(c=>c.id===selectedId))selectedId=rows[0].id;campaignList.innerHTML=rows.map(c=>{const ch=c.character?.character||'Personagem indefinido',klass=c.character?.baseClass||c.character?.class||'classe incerta',ver=c.version?.eaVersion||'versao incerta',league=c.league?.name||'Indefinida',maps=c.maps?.endgameMapCount||0;return '<button class="run '+(c.id===selectedId?'active':'')+'" data-id="'+c.id+'"><div class="runTop"><div class="runTitle">'+esc(ch)+'</div><span class="pill">'+esc(ver)+' · '+esc(league)+'</span></div><div class="muted">'+esc(klass)+' · '+fmtDate(c.start)+' · ativo '+fmtDuration(c.activeSeconds??c.wallSeconds)+'</div><div class="muted">'+maps+' mapas endgame · '+(c.passives?.allocatedCount||0)+' passivas alocadas</div></button>'}).join('');campaignList.querySelectorAll('button').forEach(b=>b.onclick=()=>{selectedId=b.dataset.id;render()})}
 function bars(title,data,color){const entries=Object.entries(data||{}).sort((a,b)=>b[1]-a[1]).slice(0,10),max=Math.max(1,...entries.map(x=>x[1]));return '<div class="card detail"><h2>'+title+'</h2><div class="bars">'+(entries.map(([l,v])=>'<div class="barRow"><div class="barLabel" title="'+esc(l)+'">'+esc(l)+'</div><div class="barTrack"><div class="barFill" style="width:'+Math.max(1,v/max*100)+'%;background:'+color+'"></div></div><div class="barValue">'+fmtDuration(v)+'</div></div>').join('')||'<div class="muted">Sem dados.</div>')+'</div></div>'}
 function countBars(title,data,color){const entries=Object.entries(data||{}).sort((a,b)=>b[1]-a[1]).slice(0,10),max=Math.max(1,...entries.map(x=>x[1]));return '<div class="card detail"><h2>'+title+'</h2><div class="bars">'+(entries.map(([l,v])=>'<div class="barRow"><div class="barLabel" title="'+esc(l)+'">'+esc(l)+'</div><div class="barTrack"><div class="barFill" style="width:'+Math.max(1,v/max*100)+'%;background:'+color+'"></div></div><div class="barValue">'+v+'</div></div>').join('')||'<div class="muted">Sem dados.</div>')+'</div></div>'}
-function renderDetail(c){const ch=c.character||{},tags=Object.keys(c.version?.clientTags||{}).join(', ')||'-',rows=(c.characters||[]).map(r=>'<tr><td>'+esc(r.character)+'</td><td>'+esc(r.baseClass||r.class||'-')+'</td><td>'+(r.minLevel??'-')+'-'+(r.maxLevel??'-')+'</td><td>'+r.levelUps+'</td></tr>').join('');detail.innerHTML='<h2>'+esc(ch.character||c.id)+'</h2><div class="muted">'+fmtDate(c.start)+' ate '+fmtDate(c.end)+(c.duplicateReason?' · duplicada por multiplas ligas em trade whisper':'')+'</div><div class="detailRow">'+[['Versao EA',c.version?.eaVersion||'-',tags],['Liga',c.league?.name||'Indefinida',(c.league?.source||'not_found')+' · '+(c.league?.type||'Unknown')],['Classe inicial',ch.baseClass||ch.class||'-','detectada por level-up'],['Passivas alocadas',c.passives?.allocatedCount||0,(c.passives?.unallocatedCount||0)+' removidas'],['Tempo ativo',fmtDuration(c.activeSeconds??c.wallSeconds),'areas capadas em 1h'],['Hideout',fmtDuration(c.timing?.hideoutSeconds),''],['AFK',fmtDuration(c.timing?.afkSeconds),''],['Foco perdido / pause proxy',fmtDuration(c.timing?.focusLostSeconds),''],['Passive tree estimado',fmtDuration(c.timing?.passiveTreeSecondsEstimated),''],['Gaps longos',fmtDuration(c.timing?.inactiveGapSeconds),''],['Areas geradas',c.timing?.areaCount||0,'']].map(x=>'<div class="small"><div class="label">'+x[0]+'</div><div class="value">'+esc(x[1])+'</div><div class="muted">'+esc(x[2])+'</div></div>').join('')+'</div><div class="split">'+bars('Tempo por ato',c.timing?.actSeconds,'var(--good)')+countBars('Top passivas brutas',c.passives?.topPassives,'var(--cold)')+'</div><div class="split">'+bars('Top areas',c.timing?.areaSecondsTop,'var(--accent)')+'<div class="card detail"><h2>Personagens candidatos</h2><table><thead><tr><th>Nome</th><th>Classe</th><th>Level</th><th>Ups</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" class="muted">Sem level-up detectado.</td></tr>')+'</tbody></table></div></div>'}
+function renderDetail(c){const ch=c.character||{},tags=Object.keys(c.version?.clientTags||{}).join(', ')||'-',rows=(c.characters||[]).map(r=>'<tr><td>'+esc(r.character)+'</td><td>'+esc(r.baseClass||r.class||'-')+'</td><td>'+(r.minLevel??'-')+'-'+(r.maxLevel??'-')+'</td><td>'+r.levelUps+'</td></tr>').join(''),mapNote=(c.maps?.endgameMapEntryCount||0)+' entradas/reentradas';detail.innerHTML='<h2>'+esc(ch.character||c.id)+'</h2><div class="muted">'+fmtDate(c.start)+' ate '+fmtDate(c.end)+(c.duplicateReason?' · duplicada por multiplas ligas em trade whisper':'')+'</div><div class="detailRow">'+[['Versao EA',c.version?.eaVersion||'-',tags],['Liga',c.league?.name||'Indefinida',(c.league?.source||'not_found')+' · '+(c.league?.type||'Unknown')],['Classe inicial',ch.baseClass||ch.class||'-','detectada por level-up'],['Mapas endgame',c.maps?.endgameMapCount||0,mapNote],['Tempo endgame',fmtDuration(c.timing?.endgameSeconds),'somente areas Map*'],['Passivas alocadas',c.passives?.allocatedCount||0,(c.passives?.unallocatedCount||0)+' removidas'],['Tempo ativo',fmtDuration(c.activeSeconds??c.wallSeconds),'areas capadas em 1h'],['Hideout',fmtDuration(c.timing?.hideoutSeconds),''],['AFK',fmtDuration(c.timing?.afkSeconds),''],['Foco perdido / pause proxy',fmtDuration(c.timing?.focusLostSeconds),''],['Passive tree estimado',fmtDuration(c.timing?.passiveTreeSecondsEstimated),''],['Gaps longos',fmtDuration(c.timing?.inactiveGapSeconds),''],['Areas geradas',c.timing?.areaCount||0,'']].map(x=>'<div class="small"><div class="label">'+x[0]+'</div><div class="value">'+esc(x[1])+'</div><div class="muted">'+esc(x[2])+'</div></div>').join('')+'</div><div class="split">'+countBars('Top mapas endgame',c.maps?.endgameMapCounts,'var(--warn)')+bars('Tempo por ato',c.timing?.actSeconds,'var(--good)')+'</div><div class="split">'+bars('Top areas',c.timing?.areaSecondsTop,'var(--accent)')+countBars('Top passivas brutas',c.passives?.topPassives,'var(--cold)')+'</div><div class="card detail"><h2>Personagens candidatos</h2><table><thead><tr><th>Nome</th><th>Classe</th><th>Level</th><th>Ups</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" class="muted">Sem level-up detectado.</td></tr>')+'</tbody></table></div>'}
 function render(){const rows=filtered();renderMetrics(rows);renderList(rows);const selected=rows.find(c=>c.id===selectedId)||rows[0];if(selected)renderDetail(selected)}
 source.textContent=analysis.metadata.sourcePath+' · gerado em '+fmtDate(analysis.generatedAt);['search','versionFilter','classFilter','leagueFilter'].forEach(id=>{document.getElementById(id).addEventListener('input',render);document.getElementById(id).addEventListener('change',render)});fillFilters();renderFileFacts();render();
 </script>
