@@ -58,6 +58,7 @@ node .\poe2-client-analyzer.mjs --log "C:\caminho\para\client.txt"
 - Tempo por ato/area usando eventos `Generating level ... area`.
 - Mapas endgame feitos, contando apenas areas internas `Map*` e deduplicando reentradas pela mesma seed.
 - Ranking de mapas endgame por nome legivel vindo de `[SCENE] Set Source`, como `Sacred Reservoir` e `The Jade Isles`.
+- Ranking de mapas anomaly frequentados, contando visitas/reentradas por nome e incluindo as areas internas `MapUniqueReactor_*`.
 - Tempo em hideout por areas com `Hideout`.
 - AFK por eventos `AFK mode is now ON/OFF`.
 - Tempo fora de foco como proxy para pause/alt-tab.

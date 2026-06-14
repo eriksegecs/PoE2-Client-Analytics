@@ -460,6 +460,9 @@
         .replace(/\s+/g, " ")
         .trim() || area || "Endgame map";
     }
+    function isAnomalyMapInstance(instance) {
+      return /^MapUniqueReactor_/i.test(instance.area || "") || /anom/i.test(`${instance.name || ""} ${instance.area || ""}`);
+    }
 
     function parseUsefulLine(line, events, metadata) {
       const opening = LOG_OPENING.exec(line);
@@ -647,16 +650,25 @@
         if (sceneName) instance.name = sceneName;
       });
       const mapCounts = {}, mapEntryCounts = {}, internalAreaCounts = {};
+      const anomalyMapCounts = {}, anomalyMapEntryCounts = {};
       for (const instance of orderedInstances) {
         addCount(mapCounts, instance.name);
         addCount(mapEntryCounts, instance.name, instance.entries);
         addCount(internalAreaCounts, instance.area);
+        if (isAnomalyMapInstance(instance)) {
+          addCount(anomalyMapCounts, instance.name);
+          addCount(anomalyMapEntryCounts, instance.name, instance.entries);
+        }
       }
       return {
         endgameMapCount: orderedInstances.length,
         endgameMapEntryCount: entryCount,
         endgameMapCounts: topObject(mapCounts),
         endgameMapEntryCounts: topObject(mapEntryCounts),
+        anomalyMapCount: Object.values(anomalyMapCounts).reduce((sum, count) => sum + count, 0),
+        anomalyMapEntryCount: Object.values(anomalyMapEntryCounts).reduce((sum, count) => sum + count, 0),
+        anomalyMapCounts: topObject(anomalyMapCounts),
+        anomalyMapEntryCounts: topObject(anomalyMapEntryCounts),
         internalAreaCounts: topObject(internalAreaCounts),
         recentEndgameMaps: orderedInstances.slice(-12).map(instance => ({
           name: instance.name,
@@ -730,22 +742,30 @@
     }
     function aggregateEndgameMaps(campaigns) {
       const seen = new Set();
-      const mapCounts = {}, mapEntryCounts = {};
-      let endgameMapCount = 0, endgameMapEntryCount = 0;
+      const mapCounts = {}, mapEntryCounts = {}, anomalyMapCounts = {}, anomalyMapEntryCounts = {};
+      let endgameMapCount = 0, endgameMapEntryCount = 0, anomalyMapCount = 0, anomalyMapEntryCount = 0;
       for (const campaign of campaigns) {
         if (seen.has(campaign.sourceCampaignId)) continue;
         seen.add(campaign.sourceCampaignId);
         const maps = campaign.maps || {};
         endgameMapCount += maps.endgameMapCount || 0;
         endgameMapEntryCount += maps.endgameMapEntryCount || 0;
+        anomalyMapCount += maps.anomalyMapCount || 0;
+        anomalyMapEntryCount += maps.anomalyMapEntryCount || 0;
         for (const [name, count] of Object.entries(maps.endgameMapCounts || {})) addCount(mapCounts, name, count);
         for (const [name, count] of Object.entries(maps.endgameMapEntryCounts || {})) addCount(mapEntryCounts, name, count);
+        for (const [name, count] of Object.entries(maps.anomalyMapCounts || {})) addCount(anomalyMapCounts, name, count);
+        for (const [name, count] of Object.entries(maps.anomalyMapEntryCounts || {})) addCount(anomalyMapEntryCounts, name, count);
       }
       return {
         endgameMapCount,
         endgameMapEntryCount,
         endgameMapCounts: topObject(mapCounts),
         endgameMapEntryCounts: topObject(mapEntryCounts),
+        anomalyMapCount,
+        anomalyMapEntryCount,
+        anomalyMapCounts: topObject(anomalyMapCounts),
+        anomalyMapEntryCounts: topObject(anomalyMapEntryCounts),
       };
     }
     function campaignToRows(campaign) {
@@ -798,6 +818,10 @@
           endgameMapEntryCount: endgameMaps.endgameMapEntryCount,
           endgameMapCounts: endgameMaps.endgameMapCounts,
           endgameMapEntryCounts: endgameMaps.endgameMapEntryCounts,
+          anomalyMapCount: endgameMaps.anomalyMapCount,
+          anomalyMapEntryCount: endgameMaps.anomalyMapEntryCount,
+          anomalyMapCounts: endgameMaps.anomalyMapCounts,
+          anomalyMapEntryCounts: endgameMaps.anomalyMapEntryCounts,
           versionCounts: topObject(versionCounts),
           baseClassCounts: topObject(baseClassCounts),
           leagueCounts: topObject(leagueCounts),
@@ -816,7 +840,7 @@
     function filteredCampaigns() {
       const q = search.value.trim().toLowerCase(), vf = versionFilter.value, cf = classFilter.value, lf = leagueFilter.value;
       return (analysis.campaigns || []).filter(c => {
-        const text = [c.id,c.sourceCampaignId,c.version?.eaVersion,c.league?.name,c.league?.type,c.character?.character,c.character?.baseClass,c.character?.class,Object.keys(c.maps?.endgameMapCounts || {}).join(" ")].join(" ").toLowerCase();
+        const text = [c.id,c.sourceCampaignId,c.version?.eaVersion,c.league?.name,c.league?.type,c.character?.character,c.character?.baseClass,c.character?.class,Object.keys(c.maps?.endgameMapCounts || {}).join(" "),Object.keys(c.maps?.anomalyMapEntryCounts || {}).join(" ")].join(" ").toLowerCase();
         if (q && !text.includes(q)) return false;
         if (vf && (c.version?.eaVersion || "unknown") !== vf) return false;
         if (cf && (c.character?.baseClass || "unknown") !== cf) return false;
@@ -891,11 +915,13 @@
       const tags = Object.keys(c.version?.clientTags || {}).join(", ") || "-";
       const rows = (c.characters || []).map(r => `<tr><td>${esc(r.character)}</td><td>${esc(r.baseClass || r.class || "-")}</td><td>${r.minLevel ?? "-"}-${r.maxLevel ?? "-"}</td><td>${r.levelUps}</td></tr>`).join("");
       const mapNote = `${c.maps?.endgameMapEntryCount || 0} entradas/reentradas`;
+      const anomalyNote = `${c.maps?.anomalyMapEntryCount || 0} visitas/reentradas`;
       const cells = [
         ["Versao EA", c.version?.eaVersion || "-", tags],
         ["Liga", c.league?.name || "Indefinida", `${c.league?.source || "not_found"} · ${c.league?.type || "Unknown"}${c.duplicateReason ? " · campanha duplicada" : ""}`],
         ["Classe", ch.baseClass || ch.class || "-", "detectada por level-up"],
         ["Mapas endgame", c.maps?.endgameMapCount || 0, mapNote],
+        ["Mapas anomaly", c.maps?.anomalyMapCount || 0, anomalyNote],
         ["Tempo endgame", fmtDuration(c.timing?.endgameSeconds), "somente areas Map*"],
         ["Passivas alocadas", c.passives?.allocatedCount || 0, `${c.passives?.unallocatedCount || 0} removidas`],
         ["Tempo ativo", fmtDuration(c.activeSeconds ?? c.wallSeconds), "areas capadas em 1h"],
@@ -906,7 +932,7 @@
       ];
       detail.innerHTML = `<h3>${esc(ch.character || c.id)}</h3><div class="muted">${fmtDate(c.start)} ate ${fmtDate(c.end)}${c.duplicateReason ? " · duplicada por multiplas ligas em trade whisper" : ""}</div>
         <div class="detailGrid">${cells.map(x=>`<div class="small"><div class="label">${x[0]}</div><div class="value">${esc(x[1])}</div><div class="muted">${esc(x[2])}</div></div>`).join("")}</div>
-        <div class="split">${barCard("Top mapas endgame", c.maps?.endgameMapCounts, "var(--red)", false)}${barCard("Tempo por ato", c.timing?.actSeconds, "var(--green)")}</div>
+        <div class="split">${barCard("Mapas anomaly frequentados", c.maps?.anomalyMapEntryCounts, "var(--red)", false)}${barCard("Tempo por ato", c.timing?.actSeconds, "var(--green)")}</div>
         <div class="split">${barCard("Top areas", c.timing?.areaSecondsTop, "var(--accent)")}${barCard("Top passivas brutas", c.passives?.topPassives, "var(--blue)", false)}</div>
         <div class="card detail"><h3>Personagens candidatos</h3><table><thead><tr><th>Nome</th><th>Classe</th><th>Level</th><th>Ups</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">Sem level-up detectado.</td></tr>'}</tbody></table></div>`;
     }
