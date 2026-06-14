@@ -56,6 +56,8 @@ node .\poe2-client-analyzer.mjs --log "C:\caminho\para\client.txt"
 - Duplicacao de uma campanha quando trade whispers dentro da mesma campanha apontam para mais de uma liga.
 - Personagem e classe por mensagens de level-up.
 - Tempo por ato/area usando eventos `Generating level ... area`.
+- Mapas endgame feitos, contando apenas areas internas `Map*` e deduplicando reentradas pela mesma seed.
+- Ranking de mapas endgame por nome legivel vindo de `[SCENE] Set Source`, como `Sacred Reservoir` e `The Jade Isles`.
 - Tempo em hideout por areas com `Hideout`.
 - AFK por eventos `AFK mode is now ON/OFF`.
 - Tempo fora de foco como proxy para pause/alt-tab.
